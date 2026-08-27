@@ -78,7 +78,7 @@ async function scrapeTOI() {
 scrapeTOI();*/
 
 
-require("dotenv").config();
+/*require("dotenv").config();
 const { chromium } = require("playwright");
 const { extractArticle } = require("./toiExtractor");
 const { isCrime } = require("./crimeFilter");
@@ -162,4 +162,4 @@ async function scrapeTOI() {
     }
 }
 
-scrapeTOI();
+scrapeTOI();*/

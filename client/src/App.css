@@ -1,301 +1,194 @@
-* {
-  box-sizing: border-box;
+/* Layout Shell */
+
+
+.leaflet-interactive:focus {
+  outline: none !important;
 }
 
-html,
-body,
-#root {
-  margin: 0;
-  width: 100%;
-  height: 100%;
+.leaflet-interactive {
+  outline: none !important;
 }
 
-body {
-  font-family: Arial, Helvetica, sans-serif;
-  background: #111;
-}
 
 .app {
-  width: 100%;
-  height: 100vh;
   display: flex;
-  flex-direction: column;
-  background: #111;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: Arial, sans-serif;
 }
 
-/* ================= MAP AREA ================= */
+/* Sidebar Container */
+.control-panel {
+  width: 350px;
+  min-width: 350px;
+  height: 100vh;
+  background-color: #1a1a1a;
+  color: #ffffff;
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  box-sizing: border-box;
+  z-index: 1000;
 
+}
+
+/* Top Section (Pinned Top) */
+.panel-top {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.title h1 {
+  margin: 0;
+  font-family: 'Playfair Display', serif;
+  font-size: 2.4em;
+  color: #ffffff;
+  transform: translate(-20px);
+}
+
+.update-info {
+  font-family: monospace;
+  font-weight: bold;
+  font-size: 14px;
+  color: #00ffff;
+  margin-top: 0px;
+  text-align: left;
+  /* specified the X axis */
+}
+
+
+
+.hover-card {
+  background-color: #2a2a2a;
+  border: 1px dashed #555;
+  border-radius: 6px;
+  padding: 12px;
+  margin-top: 4px;
+}
+
+.hover-card h3 {
+  margin: 0 0 8px 0;
+  font-size: 1.1rem;
+  color: #ff4d4d;
+}
+
+.hover-card p {
+  margin: 4px 0;
+  font-size: 0.9rem;
+}
+
+/* Spacer pushes bottom controls downward */
+.panel-spacer {
+  flex-grow: 1;
+}
+
+/* Bottom Accordions (Pinned Bottom - Pushing upwards like abacus beads) */
+.panel-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.accordion-button {
+  width: 100%;
+
+  background: none;
+  border: none;
+  color: #fff;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  font-weight: bold;
+}
+
+
+.accordion-content {
+  padding: 5px 5px;
+  font-size: 0.85rem;
+  color: #ccc;
+
+}
+
+/* Map Takes Remaining Space */
 .map-wrapper {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  padding: 8px;
-  background: #111;
+  flex-grow: 1;
+  height: 100vh;
 }
 
 .map-container {
   width: 100%;
   height: 100%;
-  border: 2px solid black;
-  overflow: hidden;
-  position: relative;
 }
 
-/* ================= CONTROL PANEL ================= */
-
-.control-panel {
-  position: absolute;
-  z-index: 1000;
-
-  top: 20px;
-  left: 20px;
-
-  width: 290px;
-  height: calc(100% - 40px);
-
-  background: rgba(255, 255, 255, 0.96);
-
-  border: 1px solid #111;
-  border-radius: 12px;
-
-  padding: 20px;
-
-  box-shadow: 0 6px 25px rgba(0, 0, 0, 0.3);
-
-  display: flex;
-  flex-direction: column;
-
-  transition:
-    transform 0.25s ease,
-    opacity 0.25s ease;
-}
-
-.control-panel:not(.open) {
-  transform: translateX(-330px);
-  opacity: 0;
-  pointer-events: none;
-}
-
-/* ================= HEADER ================= */
-
-.panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-}
-
-.panel-header h1 {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 700;
-}
-
-.panel-header p {
-  margin: 5px 0 0;
-  color: #666;
-  font-size: 13px;
-}
-
-.close-button {
-  border: none;
-  background: transparent;
-
-  font-size: 28px;
-  line-height: 20px;
-
-  cursor: pointer;
-
-  color: #222;
-}
-
-.close-button:hover {
-  color: red;
-}
-
-.panel-divider {
+.glowing-line {
+  width: 95%;
   height: 1px;
-  background: #ddd;
-  margin: 18px 0;
+  transform: translate(5px);
+  background-color: #e4eff0;
+  /* Base line color */
+  box-shadow: 0 0 1px #ffffff, 0 0 20px #f6f8f8;
+  /* Glow effect */
+  /* Spacing above and below */
 }
+/* Update these classes in your App.css */
 
-/* ================= STATS ================= */
-
-.stat-box {
-  background: #111;
-  color: white;
-
-  border-radius: 10px;
-
-  padding: 18px;
-
+.video-loading-overlay {
+  /* CHANGE THIS: Controls the container covering the window */
+  position: fixed;     /* Covers the viewport, not just the parent container */
+  top: 0;
+  left: 0;
+  width: 100vw;        /* 100% of the Viewport Width */
+  height: 100vh;       /* 100% of the Viewport Height */
+  
+  /* Retain these: Center the status text over the video */
   display: flex;
   flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  
+  /* CHANGE THIS: Must be high enough to cover EVERYTHING (Leaflet uses 400+) */
+  z-index: 9999;       
+  
+  background-color: black; /* Solid black background while video loads */
+  overflow: hidden;
 }
 
-.stat-number {
-  font-size: 32px;
-  font-weight: 700;
+.loading-video {
+  /* CHANGE THIS: Controls how the video scales inside the container */
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%); /* Precise centering */
+  
+  min-width: 100%;     /* Video must be at least as wide as the screen */
+  min-height: 100%;    /* Video must be at least as high as the screen */
+  width: auto;         /* Allow width/height to scale proportionally */
+  height: auto;
+  
+  /* CRITICAL: Video acts like a background cover image */
+  object-fit: cover;   
+  
+  /* Make video slightly subtle so text is readable */
+  opacity: 0.7; 
 }
 
-.stat-label {
-  margin-top: 3px;
-  font-size: 13px;
-  opacity: 0.7;
-}
-
-/* ================= SECTIONS ================= */
-
-.panel-section {
-  margin-top: 25px;
-}
-
-.panel-section h3 {
-  margin: 0 0 12px;
-
-  font-size: 13px;
-  text-transform: uppercase;
-
-  letter-spacing: 0.8px;
-
-  color: #777;
-}
-
-.map-option {
+.loading-status {
+  /* Ensure status text sits high above the video */
+  z-index: 10000;      
+  
+  /* Retain existing styles */
   display: flex;
   align-items: center;
   gap: 10px;
-
-  padding: 12px;
-
-  border: 1px solid #ddd;
-  border-radius: 8px;
-
-  font-size: 14px;
-}
-
-/* ================= LEGEND ================= */
-
-.heat-legend {
-  width: 100%;
-}
-
-.legend-bar {
-  width: 100%;
-  height: 12px;
-
-  border-radius: 10px;
-
-  background: linear-gradient(
-    to right,
-    blue,
-    cyan,
-    lime,
-    yellow,
-    red
-  );
-}
-
-.legend-labels {
-  display: flex;
-  justify-content: space-between;
-
-  margin-top: 5px;
-
-  font-size: 11px;
-  color: #777;
-}
-
-/* ================= PANEL BOTTOM ================= */
-
-.panel-bottom {
-  margin-top: auto;
-
-  border-top: 1px solid #ddd;
-
-  padding-top: 15px;
-}
-
-.panel-bottom p {
-  margin: 0;
-
-  font-size: 11px;
-  color: #888;
-  line-height: 1.5;
-}
-
-/* ================= MENU BUTTON ================= */
-
-.menu-button {
-  position: absolute;
-
-  z-index: 1100;
-
-  top: 20px;
-  left: 20px;
-
-  width: 45px;
-  height: 45px;
-
-  border: 1px solid #111;
-  border-radius: 8px;
-
-  background: white;
-
-  font-size: 25px;
-
-  cursor: pointer;
-
-  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.3);
-}
-
-.menu-button:hover {
-  background: #f1f1f1;
-}
-
-/* ================= FOOTER ================= */
-
-.footer {
-  height: 45px;
-
-  background: #000;
   color: white;
-
-  
-  align-items: center;
-  justify-content: space-between;
-
-  padding: 0 20px;
-
-  font-size: 12px;
-}
-
-/* ================= MOBILE ================= */
-
-@media (max-width: 600px) {
-
-  .map-wrapper {
-    padding: 5px;
-  }
-
-  .control-panel {
-    top: 15px;
-    left: 15px;
-
-    width: calc(100% - 30px);
-    max-width: 300px;
-
-    height: calc(100% - 30px);
-  }
-
-  .footer {
-    height: 40px;
-    padding: 0 12px;
-
-    font-size: 10px;
-  }
-
-  .footer span:last-child {
-    display: none;
-  }
-
+  font-family: sans-serif;
+  font-size: 1.2rem;
+  font-weight: bold;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+  background-color: rgba(0, 0, 0, 0.5); /* Background for text readability */
+  padding: 10px 20px;
+  border-radius: 8px;
 }

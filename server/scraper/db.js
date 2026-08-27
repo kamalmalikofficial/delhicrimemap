@@ -1,79 +1,52 @@
 const mongoose = require("mongoose");
+const Crime = require("../models/crime");
 
-const crimeSchema = new mongoose.Schema(
-    {
-        title: {
-            type: String,
-            required: true,
-        },
-
-        latitude: {
-            type: Number,
-            required: true,
-        },
-
-        longitude: {
-            type: Number,
-            required: true,
-        },
-
-        url: {
-            type: String,
-            unique: true,
-            required: true,
-        },
-
-        source: {
-            type: String,
-            default: "toi",
-        },
-
-        publishedAt: {
-            type: Date,
-        },
-    },
-    {
-        timestamps: true,
-    }
-);
-
-const Crime = mongoose.model("crime", crimeSchema);
+require("dotenv").config();
 
 async function connectDB() {
-    await mongoose.connect(process.env.MONGO_URI);
-    console.log("MongoDB connected");
+    try {
+        await mongoose.connect(process.env.MONGO_URI);
+        console.log("MongoDB connected");
+    } catch (error) {
+        console.error("cant connect to db");
+        console.error(error);
+        process.exit(1);
+    }
 }
 
-async function saveCrime(article, coordinates) {
-    if (
-        coordinates.latitude === null ||
-        coordinates.longitude === null
-    ) {
-        console.log("Invalid coordinates → not saving");
-        return;
+async function saveCrime(article, wardNo) {
+
+    try {
+
+        // Don't save the same article twice
+        const exists = await Crime.exists({
+            url: article.url
+        });
+
+        if (exists) {
+            console.log("Already exists → SKIPPED");
+            return;
+        }
+
+        await Crime.create({
+            title: article.title,
+            wardNo: wardNo,
+            url: article.url,
+            publishedAt: new Date()
+        });
+
+        console.log("Crime saved:", article.title);
+
+    } catch (error) {
+
+        console.error(
+            "Error saving crime:",
+            error.message
+        );
     }
-
-    const exists = await Crime.exists({
-        url: article.url,
-    });
-
-    if (exists) {
-        console.log("Already exists → skipped");
-        return;
-    }
-
-    await Crime.create({
-        title: article.title,
-        latitude: coordinates.latitude,
-        longitude: coordinates.longitude,
-        url: article.url,
-        source: "toi",
-    });
-
-    console.log("Crime saved to MongoDB");
 }
 
 module.exports = {
     connectDB,
-    saveCrime,
+    saveCrime
 };

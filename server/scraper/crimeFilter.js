@@ -97,6 +97,23 @@ const crimeKeywords = [
     "kidnapping",
     "abduction",
     "abducted",
+    "accident",
+     "collision",
+      "hit and run",
+       "crash", 
+        "overturned",
+         "run over",
+          "fatal crash",
+        "fire",
+         "blaze",
+          "cylinder blast",
+           "fire tenders", 
+        "short circuit",
+         "burnt",
+          "factory fire",
+          "waterlog",
+          "waterloging",
+          
 
     // Fraud
     "fraud",

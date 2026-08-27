@@ -7,13 +7,8 @@ const crimeSchema = new mongoose.Schema(
             required: true,
         },
 
-        latitude: {
-            type: Number,
-            required: true,
-        },
-
-        longitude: {
-            type: Number,
+        wardNo: {
+            type: String,
             required: true,
         },
 
@@ -23,19 +18,8 @@ const crimeSchema = new mongoose.Schema(
             required: true,
         },
 
-        source: {
-            type: String,
-            default: "toi",
-        },
-
         publishedAt: {
             type: Date,
-        },
-
-        fingerprint: {
-            type: String,
-            unique: true,
-            sparse: true,
         },
     },
     {
