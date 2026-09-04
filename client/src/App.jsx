@@ -25,6 +25,9 @@ function getLastUpdate() {
   const now = new Date();
   let last = new Date(BASE_UPDATE_ANCHOR);
 
+  // If anchor is in the future relative to system clock, fallback to anchor
+  if (last > now) return last;
+
   // Advance by 2 days until reaching the most recent past update
   while (true) {
     const next = new Date(last);
@@ -90,6 +93,23 @@ function formatTime(date) {
     minute: "2-digit",
     hour12: true,
   });
+}
+
+// Helper to reliably extract Ward ID / Ward Number regardless of GeoJSON or API format
+function extractWardId(obj) {
+  if (!obj) return null;
+  const rawId =
+    obj.wardNo ??
+    obj.ward_no ??
+    obj.ward_id ??
+    obj.ward_num ??
+    obj.WARD_NO ??
+    obj.WARD_NUM ??
+    obj.id;
+
+  if (rawId === undefined || rawId === null) return null;
+  // Normalize string numbers (e.g. "005" -> "5")
+  return String(rawId).replace(/^0+/, "") || "0";
 }
 
 // ======================================================
@@ -210,7 +230,7 @@ function App() {
       try {
         const res = await axios.get(API_URL, { timeout: 60000 });
         if (isMounted) {
-          setCrimes(res.data);
+          setCrimes(Array.isArray(res.data) ? res.data : []);
         }
       } catch (err) {
         console.error("Error fetching crime data:", err);
@@ -237,33 +257,40 @@ function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // 1. Updated Memoized Latest 3 Crimes
+  // Normalize current ward identifier
+  const targetWardId = useMemo(() => extractWardId(hoveredWard), [hoveredWard]);
+
+  // Crimes for the hovered ward
+  const hoveredWardCrimes = useMemo(() => {
+    if (!crimes || crimes.length === 0 || !targetWardId) return [];
+
+    return crimes.filter((c) => extractWardId(c) === targetWardId);
+  }, [crimes, targetWardId]);
+
+  // Latest 3 crimes for the HOVERED WARD ONLY
   const latestCrimes = useMemo(() => {
-    if (!crimes || crimes.length === 0) return [];
+    if (hoveredWardCrimes.length === 0) return [];
 
-    // Filter crimes for the hovered ward (falls back to all crimes if no ward is hovered)
-    const relevantCrimes = hoveredWard
-      ? crimes.filter(
-        (c) =>
-          String(c.wardNo || c.ward_no) ===
-          String(hoveredWard.wardNo || hoveredWard.id || hoveredWard.ward_no)
-      )
-      : crimes;
-
-    // Sort by publishedAt date (newest first) and pick top 3
-    return [...relevantCrimes]
-      .sort((a, b) => new Date(b.publishedAt || b.createdAt) - new Date(a.publishedAt || a.createdAt))
+    return [...hoveredWardCrimes]
+      .sort((a, b) => {
+        const dateA = new Date(a.publishedAt || a.createdAt || 0);
+        const dateB = new Date(b.publishedAt || b.createdAt || 0);
+        return dateB - dateA;
+      })
       .slice(0, 3);
-  }, [crimes, hoveredWard]);
+  }, [hoveredWardCrimes]);
+
   const toggleSection = (section) => {
     setOpenSection((current) => (current === section ? null : section));
   };
 
-  const delhiCoords = delhiBoundary.features[0].geometry.coordinates[0].map(
-    ([lng, lat]) => [lat, lng]
-  );
+  const delhiCoords = useMemo(() => {
+    return delhiBoundary?.features?.[0]?.geometry?.coordinates?.[0]?.map(
+      ([lng, lat]) => [lat, lng]
+    ) || [];
+  }, []);
 
-  const worldMask = [
+  const worldMask = useMemo(() => [
     [
       [-90, -180],
       [-90, 180],
@@ -271,7 +298,22 @@ function App() {
       [90, -180],
     ],
     delhiCoords,
-  ];
+  ], [delhiCoords]);
+
+  const wardDisplayName = useMemo(() => {
+    if (!hoveredWard) return "Hover over for more info !!";
+    return (
+      hoveredWard.name ||
+      hoveredWard.wardName ||
+      hoveredWard.WARD_NAME ||
+      (targetWardId ? `Ward ${targetWardId}` : "Selected Ward")
+    );
+  }, [hoveredWard, targetWardId]);
+
+  const wardCrimeCount = useMemo(() => {
+    if (!hoveredWard) return crimes.length;
+    return hoveredWard.totalCrimes ?? hoveredWardCrimes.length;
+  }, [hoveredWard, crimes.length, hoveredWardCrimes.length]);
 
   return (
     <div className="app">
@@ -287,23 +329,11 @@ function App() {
             <CountdownTimer targetDate={nextUpdate} />
           </div>
 
-          {/* 2. Fixed Hover Card JSX */}
           <div className="hover-card">
-            <h3>
-              {hoveredWard
-                ? hoveredWard.name || `Ward ${hoveredWard.wardNo}`
-                : "Hover over for more info !!"}
-            </h3>
+            <h3>{wardDisplayName}</h3>
             <div>
-              Total Crimes:{" "}
-              {hoveredWard
-                ? (hoveredWard.totalCrimes ??
-                  crimes.filter(
-                    (c) =>
-                      String(c.wardNo || c.ward_no) ===
-                      String(hoveredWard.wardNo || hoveredWard.id)
-                  ).length)
-                : crimes.length}
+              {hoveredWard ? "Ward Crimes: " : "Total Crimes: "}
+              <strong>{wardCrimeCount}</strong>
             </div>
 
             {/* LATEST 3 CRIMES LIST */}
@@ -317,10 +347,10 @@ function App() {
               <div style={{ fontWeight: "bold", fontSize: "12px", marginBottom: "6px" }}>
                 Latest 3 Reported Crimes:
               </div>
-              {latestCrimes.length > 0 ? (
+              {hoveredWard && latestCrimes.length > 0 ? (
                 <ol style={{ margin: 0, paddingLeft: "18px", fontSize: "12px", textAlign: "left" }}>
                   {latestCrimes.map((item, idx) => (
-                    <li key={item._id || idx} style={{ marginBottom: "6px", wordBreak: "break-word" }}>
+                    <li key={item._id || item.id || idx} style={{ marginBottom: "6px", wordBreak: "break-word" }}>
                       {item.url ? (
                         <a
                           href={item.url}
@@ -328,16 +358,18 @@ function App() {
                           rel="noopener noreferrer"
                           style={{ color: "#00ffff", textDecoration: "underline" }}
                         >
-                          {item.title}
+                          {item.title || "Untitled Incident"}
                         </a>
                       ) : (
-                        <span>{item.title}</span>
+                        <span>{item.title || "Untitled Incident"}</span>
                       )}
                     </li>
                   ))}
                 </ol>
               ) : (
-                <span style={{ fontSize: "12px", opacity: 0.7 }}>No crime records available</span>
+                <span style={{ fontSize: "12px", opacity: 0.7 }}>
+                  {hoveredWard ? "No crime records in this ward" : "Hover over a ward to see records"}
+                </span>
               )}
             </div>
           </div>
@@ -391,24 +423,28 @@ function App() {
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           />
 
-          <Polygon
-            positions={worldMask}
-            pathOptions={{
-              fillColor: "black",
-              fillOpacity: 0.4,
-              stroke: false,
-            }}
-          />
+          {worldMask[1].length > 0 && (
+            <Polygon
+              positions={worldMask}
+              pathOptions={{
+                fillColor: "black",
+                fillOpacity: 0.4,
+                stroke: false,
+              }}
+            />
+          )}
 
-          <GeoJSON
-            data={delhiBoundary}
-            style={{
-              color: "red",
-              weight: 3,
-              dashArray: "4, 6",
-              fillOpacity: 0.05,
-            }}
-          />
+          {delhiBoundary && (
+            <GeoJSON
+              data={delhiBoundary}
+              style={{
+                color: "red",
+                weight: 3,
+                dashArray: "4, 6",
+                fillOpacity: 0.05,
+              }}
+            />
+          )}
 
           <WardHeatMap
             crimes={crimes}
