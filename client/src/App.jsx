@@ -1,6 +1,12 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
-import { MapContainer, TileLayer, GeoJSON, Polygon, useMap } from "react-leaflet";
+import {
+  MapContainer,
+  TileLayer,
+  GeoJSON,
+  Polygon,
+  useMap,
+} from "react-leaflet";
 
 import delhiBoundary from "./data/Delhi_Boundary.json";
 import delhiWards from "./data/Delhi_Wards.json";
@@ -9,42 +15,18 @@ import WardHeatMap from "./compo/heatmap";
 import "./App.css";
 
 // ======================================================
-// CONFIG & API SETUP
+// CONFIG
 // ======================================================
 
-const API_URL = import.meta.env.VITE_API_URL || "https://your-render-backend-name.onrender.com/api/crime";
+const API_URL =
+  import.meta.env.VITE_API_URL ||
+  "https://your-render-backend-name.onrender.com/api/crime";
 
-// Anchor date for calculating 48-hour update intervals
 const BASE_UPDATE_ANCHOR = new Date("2026-08-27T08:00:00+05:30");
+const UPDATE_INTERVAL_DAYS = 2;
 
 // ======================================================
-// HELPER: ROBUST WARD IDENTIFIER EXTRACTION
-// ======================================================
-
-function extractWardId(obj) {
-  if (!obj) return null;
-
-  // Handle case where hoveredWard is a GeoJSON Feature or Layer object with properties
-  const target = obj.properties ? obj.properties : obj;
-
-  const rawId =
-    target.wardNo ??
-    target.ward_no ??
-    target.ward_id ??
-    target.ward_num ??
-    target.WARD_NO ??
-    target.WARD_NUM ??
-    target.Ward_No ??
-    target.id;
-
-  if (rawId === undefined || rawId === null) return null;
-
-  // Convert to string and strip leading zeros so "005" matches "5" or 5
-  return String(rawId).trim().replace(/^0+/, "") || "0";
-}
-
-// ======================================================
-// UPDATE SCHEDULE HELPERS
+// UPDATE SCHEDULE
 // ======================================================
 
 function getLastUpdate() {
@@ -55,7 +37,8 @@ function getLastUpdate() {
 
   while (true) {
     const next = new Date(last);
-    next.setDate(next.getDate() + 2);
+    next.setDate(next.getDate() + UPDATE_INTERVAL_DAYS);
+
     if (next > now) break;
     last = next;
   }
@@ -64,18 +47,22 @@ function getLastUpdate() {
 }
 
 function getNextUpdate() {
-  const last = getLastUpdate();
-  const next = new Date(last);
-  next.setDate(next.getDate() + 2);
+  const next = new Date(getLastUpdate());
+  next.setDate(next.getDate() + UPDATE_INTERVAL_DAYS);
   return next;
 }
 
 function CountdownTimer({ targetDate }) {
-  const [timeLeft, setTimeLeft] = useState({ hours: 0, minutes: 0, seconds: 0 });
+  const [timeLeft, setTimeLeft] = useState({
+    hours: 0,
+    minutes: 0,
+    seconds: 0,
+  });
 
   useEffect(() => {
     const calculateTime = () => {
-      const diff = targetDate - new Date();
+      const diff = targetDate.getTime() - Date.now();
+
       if (diff <= 0) {
         setTimeLeft({ hours: 0, minutes: 0, seconds: 0 });
         return;
@@ -97,8 +84,17 @@ function CountdownTimer({ targetDate }) {
   const pad = (n) => String(n).padStart(2, "0");
 
   return (
-    <div style={{ fontFamily: "monospace", fontWeight: "bold", fontSize: "14px", color: "#00ffff", marginTop: "4px" }}>
-      Next update in: {pad(timeLeft.hours)}h {pad(timeLeft.minutes)}m {pad(timeLeft.seconds)}s
+    <div
+      style={{
+        fontFamily: "monospace",
+        fontWeight: "bold",
+        fontSize: "14px",
+        color: "#00ffff",
+        marginTop: "4px",
+      }}
+    >
+      Next update in: {pad(timeLeft.hours)}h {pad(timeLeft.minutes)}m{" "}
+      {pad(timeLeft.seconds)}s
     </div>
   );
 }
@@ -120,7 +116,35 @@ function formatTime(date) {
 }
 
 // ======================================================
-// HELPER COMPONENTS
+// WARD HELPERS
+// ======================================================
+
+// Every place that handles ward numbers uses this same normalizer.
+export function extractWardId(obj) {
+  if (!obj) return null;
+
+  const rawId =
+    obj.wardNo ??
+    obj.ward_no ??
+    obj.ward_id ??
+    obj.ward_num ??
+    obj.WARD_NO ??
+    obj.WARD_NUM ??
+    obj.Ward_No ??
+    obj.id;
+
+  if (rawId === undefined || rawId === null) return null;
+
+  const value = String(rawId).trim();
+
+  if (!value) return null;
+
+  // "005" -> "5"
+  return value.replace(/^0+/, "") || "0";
+}
+
+// ======================================================
+// SMALL UI COMPONENTS
 // ======================================================
 
 function AccordionItem({ title, open, onClick, children }) {
@@ -140,13 +164,17 @@ function RecenterButton({ center = [28.6139, 77.209], zoom = 11 }) {
   const map = useMap();
 
   const handleRecenter = (e) => {
-    e.stopPropagation();
     e.preventDefault();
+    e.stopPropagation();
+
     map.setView(center, zoom, { animate: true });
   };
 
   return (
-    <div className="leaflet-top leaflet-left" style={{ marginTop: "61px" }}>
+    <div
+      className="leaflet-top leaflet-left"
+      style={{ marginTop: "61px" }}
+    >
       <div className="leaflet-control leaflet-bar">
         <a
           href="#"
@@ -194,7 +222,8 @@ function MapLegend() {
           width: "100%",
           height: "15px",
           borderRadius: "3px",
-          background: "linear-gradient(to right, #00ffff, #00ff00, #ffff00, #ff0000)",
+          background:
+            "linear-gradient(to right, #00ffff, #00ff00, #ffff00, #ff0000)",
         }}
       />
 
@@ -229,17 +258,34 @@ function App() {
   const [hoveredWard, setHoveredWard] = useState(null);
   const [zoomLevel] = useState(11);
 
+  // ----------------------------------------------------
+  // FETCH CRIMES
+  // ----------------------------------------------------
+
   useEffect(() => {
     let isMounted = true;
 
     const fetchCrimes = async () => {
       try {
-        const res = await axios.get(API_URL, { timeout: 60000 });
-        if (isMounted) {
-          setCrimes(Array.isArray(res.data) ? res.data : []);
-        }
+        const res = await axios.get(API_URL, {
+          timeout: 60000,
+        });
+
+        if (!isMounted) return;
+
+        const data = Array.isArray(res.data)
+          ? res.data
+          : Array.isArray(res.data?.crimes)
+          ? res.data.crimes
+          : [];
+
+        setCrimes(data);
       } catch (err) {
         console.error("Error fetching crime data:", err);
+
+        if (isMounted) {
+          setCrimes([]);
+        }
       } finally {
         if (isMounted) {
           setLoading(false);
@@ -254,77 +300,134 @@ function App() {
     };
   }, []);
 
+  // ----------------------------------------------------
+  // UPDATE TIMER
+  // ----------------------------------------------------
+
   useEffect(() => {
     const timer = setInterval(() => {
       setLastUpdate(getLastUpdate());
       setNextUpdate(getNextUpdate());
     }, 60000);
+
     return () => clearInterval(timer);
   }, []);
 
-  // Normalize ward ID for comparison
-  const targetWardId = useMemo(() => extractWardId(hoveredWard), [hoveredWard]);
+  // ----------------------------------------------------
+  // SELECTED WARD
+  // ----------------------------------------------------
 
-  // Crimes for the hovered ward
+  const targetWardId = useMemo(
+    () => extractWardId(hoveredWard),
+    [hoveredWard]
+  );
+
   const hoveredWardCrimes = useMemo(() => {
-    if (!crimes || crimes.length === 0 || !targetWardId) return [];
+    if (!targetWardId || !Array.isArray(crimes)) {
+      return [];
+    }
 
-    return crimes.filter((c) => extractWardId(c) === targetWardId);
+    return crimes.filter(
+      (crime) => extractWardId(crime) === targetWardId
+    );
   }, [crimes, targetWardId]);
 
-  // Latest 3 crimes for the hovered ward
   const latestCrimes = useMemo(() => {
-    if (hoveredWardCrimes.length === 0) return [];
-
     return [...hoveredWardCrimes]
       .sort((a, b) => {
-        const dateA = new Date(a.publishedAt || a.createdAt || a.date || 0);
-        const dateB = new Date(b.publishedAt || b.createdAt || b.date || 0);
+        const dateA = new Date(
+          a.publishedAt || a.createdAt || a.timestamp || 0
+        ).getTime();
+
+        const dateB = new Date(
+          b.publishedAt || b.createdAt || b.timestamp || 0
+        ).getTime();
+
         return dateB - dateA;
       })
       .slice(0, 3);
   }, [hoveredWardCrimes]);
 
+  // ----------------------------------------------------
+  // UI HELPERS
+  // ----------------------------------------------------
+
   const toggleSection = (section) => {
-    setOpenSection((current) => (current === section ? null : section));
+    setOpenSection((current) =>
+      current === section ? null : section
+    );
   };
 
   const delhiCoords = useMemo(() => {
-    return delhiBoundary?.features?.[0]?.geometry?.coordinates?.[0]?.map(
-      ([lng, lat]) => [lat, lng]
-    ) || [];
+    const geometry = delhiBoundary?.features?.[0]?.geometry;
+
+    if (!geometry) return [];
+
+    if (geometry.type === "Polygon") {
+      return (
+        geometry.coordinates?.[0]?.map(([lng, lat]) => [
+          lat,
+          lng,
+        ]) || []
+      );
+    }
+
+    if (geometry.type === "MultiPolygon") {
+      return (
+        geometry.coordinates?.[0]?.[0]?.map(([lng, lat]) => [
+          lat,
+          lng,
+        ]) || []
+      );
+    }
+
+    return [];
   }, []);
 
-  const worldMask = useMemo(() => [
-    [
-      [-90, -180],
-      [-90, 180],
-      [90, 180],
-      [90, -180],
+  const worldMask = useMemo(
+    () => [
+      [
+        [-90, -180],
+        [-90, 180],
+        [90, 180],
+        [90, -180],
+      ],
+      delhiCoords,
     ],
-    delhiCoords,
-  ], [delhiCoords]);
+    [delhiCoords]
+  );
 
   const wardDisplayName = useMemo(() => {
-    if (!hoveredWard) return "Hover over for more info !!";
-    const props = hoveredWard.properties || hoveredWard;
+    if (!hoveredWard) {
+      return "Hover over for more info !!";
+    }
+
     return (
-      props.name ||
-      props.wardName ||
-      props.WARD_NAME ||
-      props.ward_name ||
+      hoveredWard.name ||
+      hoveredWard.wardName ||
+      hoveredWard.Ward_Name ||
+      hoveredWard.WARD_NAME ||
       (targetWardId ? `Ward ${targetWardId}` : "Selected Ward")
     );
   }, [hoveredWard, targetWardId]);
 
   const wardCrimeCount = useMemo(() => {
-    if (!hoveredWard) return crimes.length;
+    if (!hoveredWard) {
+      return crimes.length;
+    }
+
+    // Prefer the actual filtered records so the sidebar and list
+    // always agree with each other.
     return hoveredWardCrimes.length;
-  }, [hoveredWard, crimes.length, hoveredWardCrimes.length]);
+  }, [hoveredWard, hoveredWardCrimes.length, crimes.length]);
+
+  // ----------------------------------------------------
+  // RENDER
+  // ----------------------------------------------------
 
   return (
     <div className="app">
-      {/* SIDEBAR PANEL */}
+      {/* SIDEBAR */}
       <aside className="control-panel">
         <div className="panel-top">
           <div className="title">
@@ -332,18 +435,22 @@ function App() {
           </div>
 
           <div className="update-info">
-            <div>Last update: {formatDate(lastUpdate)} {formatTime(lastUpdate)}</div>
+            <div>
+              Last update: {formatDate(lastUpdate)}{" "}
+              {formatTime(lastUpdate)}
+            </div>
+
             <CountdownTimer targetDate={nextUpdate} />
           </div>
 
           <div className="hover-card">
             <h3>{wardDisplayName}</h3>
+
             <div>
               {hoveredWard ? "Ward Crimes: " : "Total Crimes: "}
               <strong>{wardCrimeCount}</strong>
             </div>
 
-            {/* LATEST 3 CRIMES LIST */}
             <div
               style={{
                 marginTop: "10px",
@@ -351,31 +458,63 @@ function App() {
                 paddingTop: "8px",
               }}
             >
-              <div style={{ fontWeight: "bold", fontSize: "12px", marginBottom: "6px" }}>
+              <div
+                style={{
+                  fontWeight: "bold",
+                  fontSize: "12px",
+                  marginBottom: "6px",
+                }}
+              >
                 Latest 3 Reported Crimes:
               </div>
+
               {hoveredWard && latestCrimes.length > 0 ? (
-                <ol style={{ margin: 0, paddingLeft: "18px", fontSize: "12px", textAlign: "left" }}>
+                <ol
+                  style={{
+                    margin: 0,
+                    paddingLeft: "18px",
+                    fontSize: "12px",
+                    textAlign: "left",
+                  }}
+                >
                   {latestCrimes.map((item, idx) => (
-                    <li key={item._id || item.id || idx} style={{ marginBottom: "6px", wordBreak: "break-word" }}>
+                    <li
+                      key={item._id || item.id || item.url || idx}
+                      style={{
+                        marginBottom: "6px",
+                        wordBreak: "break-word",
+                      }}
+                    >
                       {item.url ? (
                         <a
                           href={item.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          style={{ color: "#00ffff", textDecoration: "underline" }}
+                          style={{
+                            color: "#00ffff",
+                            textDecoration: "underline",
+                          }}
                         >
-                          {item.title || item.headline || "Untitled Incident"}
+                          {item.title || "Untitled Incident"}
                         </a>
                       ) : (
-                        <span>{item.title || item.headline || "Untitled Incident"}</span>
+                        <span>
+                          {item.title || "Untitled Incident"}
+                        </span>
                       )}
                     </li>
                   ))}
                 </ol>
               ) : (
-                <span style={{ fontSize: "12px", opacity: 0.7 }}>
-                  {hoveredWard ? "No crime records in this ward" : "Hover over a ward to see records"}
+                <span
+                  style={{
+                    fontSize: "12px",
+                    opacity: 0.7,
+                  }}
+                >
+                  {hoveredWard
+                    ? "No crime records in this ward"
+                    : "Hover over a ward to see records"}
                 </span>
               )}
             </div>
@@ -390,7 +529,10 @@ function App() {
             open={openSection === "disclaimer"}
             onClick={() => toggleSection("disclaimer")}
           >
-            ⚠️ Data aggregated from public sources. May contain duplicates, inaccuracies, or incomplete information. Locations are approximate. Don't refer for any official purpose.
+            ⚠️ Data aggregated from public sources. May contain
+            duplicates, inaccuracies, or incomplete information.
+            Locations are approximate. Don't refer for any official
+            purpose.
           </AccordionItem>
 
           <div className="glowing-line" />
@@ -400,17 +542,32 @@ function App() {
             open={openSection === "contact"}
             onClick={() => toggleSection("contact")}
           >
-            Questions or feedback? <br /> Mail : kamalmalik2006@gmail.com <br /> Github :
+            Questions or feedback? <br />
+            Mail : kamalmalik2006@gmail.com <br />
+            Github :
           </AccordionItem>
         </div>
       </aside>
 
-      {/* MAP WRAPPER */}
-      <main className="map-wrapper" style={{ position: "relative" }}>
+      {/* MAP */}
+      <main
+        className="map-wrapper"
+        style={{ position: "relative" }}
+      >
         {loading && (
           <div className="video-loading-overlay">
-            <video autoPlay loop muted playsInline preload="auto" className="loading-video">
-              <source src="/loading-loop.mp4" type="video/mp4" />
+            <video
+              autoPlay
+              loop
+              muted
+              playsInline
+              preload="auto"
+              className="loading-video"
+            >
+              <source
+                src="/loading-loop.mp4"
+                type="video/mp4"
+              />
             </video>
           </div>
         )}
@@ -423,7 +580,10 @@ function App() {
           boxZoom={false}
           className="map-container"
         >
-          <RecenterButton center={[28.6139, 77.209]} zoom={11} />
+          <RecenterButton
+            center={[28.6139, 77.209]}
+            zoom={11}
+          />
 
           <TileLayer
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
