@@ -661,28 +661,130 @@ function HeatMap({ crimes, wardsGeoJSON }) {
 export default HeatMap;
 */
 //ver 5
-
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { GeoJSON, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet.heat";
 
-// Fast point-in-polygon check
-function pointInPolygon(point, vs) {
-  const x = point[0], y = point[1];
+// ======================================================
+// HELPERS
+// ======================================================
+
+function normalizeWardId(value) {
+  if (value === undefined || value === null) return null;
+
+  const str = String(value).trim();
+
+  if (!str) return null;
+
+  return str.replace(/^0+/, "") || "0";
+}
+
+function getCrimeWardId(crime) {
+  if (!crime) return null;
+
+  return normalizeWardId(
+    crime.wardNo ??
+      crime.ward_no ??
+      crime.ward_id ??
+      crime.ward_num ??
+      crime.WARD_NO ??
+      crime.WARD_NUM ??
+      crime.Ward_No ??
+      crime.id
+  );
+}
+
+function getFeatureWardId(feature) {
+  const properties = feature?.properties;
+
+  if (!properties) return null;
+
+  return normalizeWardId(
+    properties.Ward_No ??
+      properties.ward_no ??
+      properties.wardNo ??
+      properties.WARD_NO ??
+      properties.WARD_NUM ??
+      properties.ward_num ??
+      properties.ward_id ??
+      properties.id
+  );
+}
+
+function getFeatureWardName(feature, wardNo) {
+  const properties = feature?.properties;
+
+  return (
+    properties?.Ward_Name ??
+    properties?.ward_name ??
+    properties?.WardName ??
+    properties?.wardName ??
+    properties?.WARD_NAME ??
+    (wardNo ? `Ward ${wardNo}` : "Unknown Ward")
+  );
+}
+
+function getCrimeDate(crime) {
+  return (
+    crime?.publishedAt ??
+    crime?.createdAt ??
+    crime?.timestamp ??
+    null
+  );
+}
+
+function getDaysAgo(crime) {
+  const rawDate = getCrimeDate(crime);
+
+  if (!rawDate) return null;
+
+  const date = new Date(rawDate);
+
+  if (Number.isNaN(date.getTime())) return null;
+
+  return (Date.now() - date.getTime()) / (24 * 60 * 60 * 1000);
+}
+
+// Fast point-in-polygon check.
+// point = [longitude, latitude]
+// polygon coordinates = [[longitude, latitude], ...]
+function pointInPolygon(point, polygon) {
+  const x = point[0];
+  const y = point[1];
+
   let inside = false;
-  for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
-    const xi = vs[i][0], yi = vs[i][1];
-    const xj = vs[j][0], yj = vs[j][1];
-    const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
-    if (intersect) inside = !inside;
+
+  for (
+    let i = 0, j = polygon.length - 1;
+    i < polygon.length;
+    j = i++
+  ) {
+    const xi = polygon[i][0];
+    const yi = polygon[i][1];
+
+    const xj = polygon[j][0];
+    const yj = polygon[j][1];
+
+    const intersects =
+      yi > y !== yj > y &&
+      x <
+        ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+
+    if (intersects) {
+      inside = !inside;
+    }
   }
+
   return inside;
 }
 
-// Bounding box & area calculation
-function getBBoxAndArea(coords) {
-  let minLng = Infinity, maxLng = -Infinity, minLat = Infinity, maxLat = -Infinity;
+function getBBox(coords) {
+  let minLng = Infinity;
+  let maxLng = -Infinity;
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+
   coords.forEach(([lng, lat]) => {
     if (lng < minLng) minLng = lng;
     if (lng > maxLng) maxLng = lng;
@@ -690,175 +792,288 @@ function getBBoxAndArea(coords) {
     if (lat > maxLat) maxLat = lat;
   });
 
-  const deltaLat = maxLat - minLat;
-  const deltaLng = maxLng - minLng;
-  const approxArea = Math.max(0.00005, deltaLat * deltaLng);
-
-  return { minLng, maxLng, minLat, maxLat, approxArea };
+  return {
+    minLng,
+    maxLng,
+    minLat,
+    maxLat,
+  };
 }
 
-function HeatMap({ crimes, wardsGeoJSON, setHoveredWard }) {
+function getPolygonRings(geometry) {
+  if (!geometry) return [];
+
+  if (geometry.type === "Polygon") {
+    return geometry.coordinates || [];
+  }
+
+  if (geometry.type === "MultiPolygon") {
+    return (geometry.coordinates || []).flatMap(
+      (polygon) => polygon || []
+    );
+  }
+
+  return [];
+}
+
+function getOuterRing(geometry) {
+  const rings = getPolygonRings(geometry);
+
+  if (!rings.length) return null;
+
+  return rings[0];
+}
+
+// ======================================================
+// CONSTANTS
+// ======================================================
+
+const MAX_HEAT_DAYS = 8;
+
+const COLOR_STOPS = [
+  "#00ffff",
+  "#00ff00",
+  "#ffff00",
+  "#ff0000",
+];
+
+// ======================================================
+// COMPONENT
+// ======================================================
+
+function HeatMap({
+  crimes = [],
+  wardsGeoJSON,
+  setHoveredWard,
+}) {
   const map = useMap();
-  const [wardStats, setWardStats] = useState({});
 
-  // Compute crime totals and percentile scores per ward
-  const { wardTotals, wardPercentiles } = useMemo(() => {
-    if (!crimes?.length) return { wardTotals: {}, wardPercentiles: {} };
+  // ----------------------------------------------------
+  // ALL CRIME COUNTS BY WARD
+  // Used by hover/sidebar.
+  // ----------------------------------------------------
 
+  const wardTotals = useMemo(() => {
     const totals = {};
-    const now = new Date();
-    const MS_IN_DAY = 24 * 60 * 60 * 1000;
 
-    crimes.forEach((c) => {
-      const rawDate = c.createdAt || c.publishedAt || c.timestamp;
-      if (!rawDate) return;
+    if (!Array.isArray(crimes)) {
+      return totals;
+    }
 
-      const crimeDate = new Date(rawDate);
-      if (isNaN(crimeDate.getTime())) return;
+    crimes.forEach((crime) => {
+      const wardNo = getCrimeWardId(crime);
 
-      const daysAgo = (now - crimeDate) / MS_IN_DAY;
-      if (daysAgo >= 8 || daysAgo < 0) return;
-
-      const wardNo = String(c.wardNo || "").trim();
       if (!wardNo) return;
 
       totals[wardNo] = (totals[wardNo] || 0) + 1;
     });
 
-    // Compute percentile ranking
-    const countsArray = Object.values(totals).sort((a, b) => a - b);
-    const percentiles = {};
-    const totalWards = countsArray.length;
-
-    Object.entries(totals).forEach(([wardNo, count]) => {
-      if (totalWards === 0) {
-        percentiles[wardNo] = 0;
-        return;
-      }
-      const rank = countsArray.filter((val) => val <= count).length;
-      percentiles[wardNo] = Math.round((rank / totalWards) * 100);
-    });
-
-    return { wardTotals: totals, wardPercentiles: percentiles };
+    return totals;
   }, [crimes]);
 
-  useEffect(() => {
-    if (!map || !crimes?.length || !wardsGeoJSON?.features) return;
+  // ----------------------------------------------------
+  // RECENT INCIDENTS BY WARD
+  // Used only for the heatmap.
+  // ----------------------------------------------------
 
-    const now = new Date();
-    const MS_IN_DAY = 24 * 60 * 60 * 1000;
-    const wardIncidents = {};
+  const recentWardIncidents = useMemo(() => {
+    const incidents = {};
 
-    crimes.forEach((c) => {
-      const rawDate = c.createdAt || c.publishedAt || c.timestamp;
-      if (!rawDate) return;
+    if (!Array.isArray(crimes)) {
+      return incidents;
+    }
 
-      const crimeDate = new Date(rawDate);
-      if (isNaN(crimeDate.getTime())) return;
+    crimes.forEach((crime) => {
+      const wardNo = getCrimeWardId(crime);
+      const daysAgo = getDaysAgo(crime);
 
-      const daysAgo = (now - crimeDate) / MS_IN_DAY;
-      if (daysAgo >= 8 || daysAgo < 0) return;
+      if (!wardNo || daysAgo === null) return;
 
-      const wardNo = String(c.wardNo || "").trim();
-      if (!wardNo) return;
+      // Only last 8 days contribute to heatmap.
+      if (daysAgo < 0 || daysAgo >= MAX_HEAT_DAYS) {
+        return;
+      }
 
-      if (!wardIncidents[wardNo]) wardIncidents[wardNo] = [];
-      wardIncidents[wardNo].push(daysAgo);
+      if (!incidents[wardNo]) {
+        incidents[wardNo] = [];
+      }
+
+      incidents[wardNo].push(daysAgo);
     });
 
-    setWardStats(wardIncidents);
+    return incidents;
+  }, [crimes]);
+
+  // ----------------------------------------------------
+  // CREATE HEAT LAYER
+  // ----------------------------------------------------
+
+  useEffect(() => {
+    if (!map || !wardsGeoJSON?.features) {
+      return undefined;
+    }
 
     const heatPoints = [];
-    const REFERENCE_AREA = 0.0005;
 
     wardsGeoJSON.features.forEach((feature) => {
-      const wardNo = String(feature.properties?.Ward_No || "").trim();
-      const incidentDays = wardIncidents[wardNo];
+      const wardNo = getFeatureWardId(feature);
 
-      if (!incidentDays || incidentDays.length === 0) return;
+      if (!wardNo) return;
 
-      const geom = feature.geometry;
-      let rawCoords = [];
-      if (geom.type === "Polygon") rawCoords = geom.coordinates[0];
-      else if (geom.type === "MultiPolygon") rawCoords = geom.coordinates[0][0];
+      const incidentDays =
+        recentWardIncidents[wardNo];
 
-      if (!rawCoords || rawCoords.length === 0) return;
+      if (!incidentDays?.length) return;
 
-      const { minLng, maxLng, minLat, maxLat, approxArea } = getBBoxAndArea(rawCoords);
-      const areaMultiplier = Math.min(3.5, Math.max(0.5, approxArea / REFERENCE_AREA));
+      const rings = getPolygonRings(feature.geometry);
 
-      incidentDays.forEach((daysAgo) => {
-        const recencyWeight = Math.max(0, 1 - daysAgo / 8);
-        const basePoints = 6 + recencyWeight * 40;
-        const targetPointCount = Math.floor(basePoints * areaMultiplier);
+      if (!rings.length) return;
 
-        let added = 0;
-        let attempts = 0;
+      // Generate heat points separately for every outer ring.
+      rings.forEach((ring) => {
+        if (!ring || ring.length < 3) return;
 
-        while (added < targetPointCount && attempts < 350) {
-          attempts++;
-          const rndLat = minLat + Math.random() * (maxLat - minLat);
-          const rndLng = minLng + Math.random() * (maxLng - minLng);
+        const bbox = getBBox(ring);
 
-          if (pointInPolygon([rndLng, rndLat], rawCoords)) {
-            heatPoints.push([rndLat, rndLng, 0.45]);
-            added++;
-          }
+        if (
+          !Number.isFinite(bbox.minLng) ||
+          !Number.isFinite(bbox.maxLng) ||
+          !Number.isFinite(bbox.minLat) ||
+          !Number.isFinite(bbox.maxLat)
+        ) {
+          return;
         }
+
+        incidentDays.forEach((daysAgo) => {
+          const recencyWeight = Math.max(
+            0,
+            1 - daysAgo / MAX_HEAT_DAYS
+          );
+
+          // More recent crime = more heat points.
+          const pointCount = Math.floor(
+            8 + recencyWeight * 42
+          );
+
+          let added = 0;
+          let attempts = 0;
+
+          while (
+            added < pointCount &&
+            attempts < 500
+          ) {
+            attempts++;
+
+            const lng =
+              bbox.minLng +
+              Math.random() *
+                (bbox.maxLng - bbox.minLng);
+
+            const lat =
+              bbox.minLat +
+              Math.random() *
+                (bbox.maxLat - bbox.minLat);
+
+            if (pointInPolygon([lng, lat], ring)) {
+              // [latitude, longitude, intensity]
+              heatPoints.push([
+                lat,
+                lng,
+                Math.max(0.25, recencyWeight),
+              ]);
+
+              added++;
+            }
+          }
+        });
       });
     });
 
-    if (heatPoints.length === 0) return;
+    if (!heatPoints.length) {
+      return undefined;
+    }
 
-    const heatLayer = L.heatLayer(heatPoints, {
-      radius: 25,
-      blur: 16,
-      maxZoom: 15,
-      max: 1.0,
-      gradient: {
-        0.15: "#00ffff",
-        0.4: "#00ff00",
-        0.65: "#ffff00",
-        1.0: "#ff0000",
-      },
-    }).addTo(map);
+    const heatLayer = L.heatLayer(
+      heatPoints,
+      {
+        radius: 25,
+        blur: 18,
+        maxZoom: 15,
+        max: 1.0,
+        minOpacity: 0.18,
+        gradient: {
+          0.15: COLOR_STOPS[0],
+          0.4: COLOR_STOPS[1],
+          0.65: COLOR_STOPS[2],
+          1.0: COLOR_STOPS[3],
+        },
+      }
+    ).addTo(map);
 
     return () => {
-      map.removeLayer(heatLayer);
+      if (map.hasLayer(heatLayer)) {
+        map.removeLayer(heatLayer);
+      }
     };
-  }, [map, crimes, wardsGeoJSON]);
+  }, [
+    map,
+    wardsGeoJSON,
+    recentWardIncidents,
+  ]);
 
-  // Leaflet mouse event handler
+  // ----------------------------------------------------
+  // WARD HOVER HANDLERS
+  // ----------------------------------------------------
+
   const onEachFeature = (feature, layer) => {
-    const wardNo = String(feature.properties?.Ward_No || feature.properties?.ward_no || "").trim();
-    const wardName = feature.properties?.Ward_Name || feature.properties?.ward_name || `Ward ${wardNo}`;
+    const wardNo = getFeatureWardId(feature);
+    const wardName = getFeatureWardName(
+      feature,
+      wardNo
+    );
+
+    const totalCrimes =
+      wardNo ? wardTotals[wardNo] || 0 : 0;
 
     layer.on({
-      mouseover: (e) => {
-        const target = e.target;
+      mouseover: (event) => {
+        const target = event.target;
+
         target.setStyle({
           color: "#ffffff",
           weight: 2,
-          stroke: true,
-          fillOpacity: 0.15,
+          opacity: 1,
+          fillOpacity: 0.12,
         });
 
-        // Push hovered ward details up to main App state
+        if (target.bringToFront) {
+          target.bringToFront();
+        }
+
+        // IMPORTANT:
+        // Send wardNo to App as well as the name/count.
+        // App uses this ID to filter crimes.
         if (setHoveredWard) {
           setHoveredWard({
+            wardNo,
             name: wardName,
-            totalCrimes: wardTotals[wardNo] || 0,
+            wardName,
+            Ward_Name: wardName,
+            totalCrimes,
           });
         }
       },
-      mouseout: (e) => {
-        const target = e.target;
+
+      mouseout: (event) => {
+        const target = event.target;
+
         target.setStyle({
-          stroke: false,
+          color: "transparent",
+          weight: 0,
+          opacity: 0,
           fillOpacity: 0,
         });
 
-        // Clear hover details
         if (setHoveredWard) {
           setHoveredWard(null);
         }
@@ -866,16 +1081,27 @@ function HeatMap({ crimes, wardsGeoJSON, setHoveredWard }) {
     });
   };
 
-  if (!wardsGeoJSON) return null;
+  // ----------------------------------------------------
+  // RENDER INTERACTIVE WARD LAYER
+  // ----------------------------------------------------
+
+  if (!wardsGeoJSON?.features) {
+    return null;
+  }
 
   return (
     <GeoJSON
-      key={`interactive-wards-${Object.keys(wardStats).length}`}
+      key={`interactive-wards-${crimes.length}-${Object.keys(
+        wardTotals
+      ).length}`}
       data={wardsGeoJSON}
-      style={{
+      style={() => ({
+        fillColor: "transparent",
         fillOpacity: 0,
-        stroke: false,
-      }}
+        color: "transparent",
+        opacity: 0,
+        weight: 0,
+      })}
       onEachFeature={onEachFeature}
     />
   );
