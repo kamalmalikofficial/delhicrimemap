@@ -1,5 +1,4 @@
-
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import axios from "axios";
 import { MapContainer, TileLayer, GeoJSON, Polygon, useMap } from "react-leaflet";
 
@@ -13,14 +12,36 @@ import "./App.css";
 // CONFIG & API SETUP
 // ======================================================
 
-// Replace the string below with your actual deployed Render URL once created
 const API_URL = import.meta.env.VITE_API_URL || "https://your-render-backend-name.onrender.com/api/crime";
 
+// Anchor date for calculating 48-hour update intervals
+const BASE_UPDATE_ANCHOR = new Date("2026-08-27T08:00:00+05:30");
+
 // ======================================================
-// UPDATE SCHEDULE
+// UPDATE SCHEDULE HELPERS
 // ======================================================
 
-const LAST_UPDATE = new Date("2026-08-27T08:00:00+05:30");
+function getLastUpdate() {
+  const now = new Date();
+  let last = new Date(BASE_UPDATE_ANCHOR);
+
+  // Advance by 2 days until reaching the most recent past update
+  while (true) {
+    const next = new Date(last);
+    next.setDate(next.getDate() + 2);
+    if (next > now) break;
+    last = next;
+  }
+
+  return last;
+}
+
+function getNextUpdate() {
+  const last = getLastUpdate();
+  const next = new Date(last);
+  next.setDate(next.getDate() + 2);
+  return next;
+}
 
 function CountdownTimer({ targetDate }) {
   const [timeLeft, setTimeLeft] = useState({ hours: 0, minutes: 0, seconds: 0 });
@@ -53,18 +74,6 @@ function CountdownTimer({ targetDate }) {
       Next update in: {pad(timeLeft.hours)}h {pad(timeLeft.minutes)}m {pad(timeLeft.seconds)}s
     </div>
   );
-}
-
-function getNextUpdate() {
-  const next = new Date(LAST_UPDATE);
-  const now = new Date();
-
-  while (next <= now) {
-    next.setDate(next.getDate() + 2);
-  }
-
-  next.setHours(8, 0, 0, 0);
-  return next;
 }
 
 function formatDate(date) {
@@ -186,7 +195,11 @@ function App() {
   const [crimes, setCrimes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openSection, setOpenSection] = useState(null);
+
+  // Dynamic update cycle states
+  const [lastUpdate, setLastUpdate] = useState(getLastUpdate());
   const [nextUpdate, setNextUpdate] = useState(getNextUpdate());
+
   const [hoveredWard, setHoveredWard] = useState(null);
   const [zoomLevel] = useState(11);
 
@@ -203,7 +216,7 @@ function App() {
         console.error("Error fetching crime data:", err);
       } finally {
         if (isMounted) {
-          setLoading(false); // Unmounts the loading video once backend responds or fails
+          setLoading(false);
         }
       }
     };
@@ -215,13 +228,33 @@ function App() {
     };
   }, []);
 
+  // Update cycle timer check
   useEffect(() => {
     const timer = setInterval(() => {
+      setLastUpdate(getLastUpdate());
       setNextUpdate(getNextUpdate());
     }, 60000);
     return () => clearInterval(timer);
   }, []);
 
+  // 1. Updated Memoized Latest 3 Crimes
+  const latestCrimes = useMemo(() => {
+    if (!crimes || crimes.length === 0) return [];
+
+    // Filter crimes for the hovered ward (falls back to all crimes if no ward is hovered)
+    const relevantCrimes = hoveredWard
+      ? crimes.filter(
+        (c) =>
+          String(c.wardNo || c.ward_no) ===
+          String(hoveredWard.wardNo || hoveredWard.id || hoveredWard.ward_no)
+      )
+      : crimes;
+
+    // Sort by publishedAt date (newest first) and pick top 3
+    return [...relevantCrimes]
+      .sort((a, b) => new Date(b.publishedAt || b.createdAt) - new Date(a.publishedAt || a.createdAt))
+      .slice(0, 3);
+  }, [crimes, hoveredWard]);
   const toggleSection = (section) => {
     setOpenSection((current) => (current === section ? null : section));
   };
@@ -250,13 +283,63 @@ function App() {
           </div>
 
           <div className="update-info">
-            <div>Last update: {formatDate(LAST_UPDATE)} {formatTime(LAST_UPDATE)}</div>
+            <div>Last update: {formatDate(lastUpdate)} {formatTime(lastUpdate)}</div>
             <CountdownTimer targetDate={nextUpdate} />
           </div>
 
+          {/* 2. Fixed Hover Card JSX */}
           <div className="hover-card">
-            <h3>{hoveredWard ? hoveredWard.name : "Hover over for more info !!"}</h3>
-            Total Crime: {hoveredWard ? hoveredWard.totalCrimes : crimes.length}
+            <h3>
+              {hoveredWard
+                ? hoveredWard.name || `Ward ${hoveredWard.wardNo}`
+                : "Hover over for more info !!"}
+            </h3>
+            <div>
+              Total Crimes:{" "}
+              {hoveredWard
+                ? (hoveredWard.totalCrimes ??
+                  crimes.filter(
+                    (c) =>
+                      String(c.wardNo || c.ward_no) ===
+                      String(hoveredWard.wardNo || hoveredWard.id)
+                  ).length)
+                : crimes.length}
+            </div>
+
+            {/* LATEST 3 CRIMES LIST */}
+            <div
+              style={{
+                marginTop: "10px",
+                borderTop: "1px solid rgba(255,255,255,0.2)",
+                paddingTop: "8px",
+              }}
+            >
+              <div style={{ fontWeight: "bold", fontSize: "12px", marginBottom: "6px" }}>
+                Latest 3 Reported Crimes:
+              </div>
+              {latestCrimes.length > 0 ? (
+                <ol style={{ margin: 0, paddingLeft: "18px", fontSize: "12px", textAlign: "left" }}>
+                  {latestCrimes.map((item, idx) => (
+                    <li key={item._id || idx} style={{ marginBottom: "6px", wordBreak: "break-word" }}>
+                      {item.url ? (
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ color: "#00ffff", textDecoration: "underline" }}
+                        >
+                          {item.title}
+                        </a>
+                      ) : (
+                        <span>{item.title}</span>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <span style={{ fontSize: "12px", opacity: 0.7 }}>No crime records available</span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -285,7 +368,6 @@ function App() {
 
       {/* MAP WRAPPER */}
       <main className="map-wrapper" style={{ position: "relative" }}>
-        {/* VIDEO LOADING OVERLAY */}
         {loading && (
           <div className="video-loading-overlay">
             <video autoPlay loop muted playsInline preload="auto" className="loading-video">
@@ -335,7 +417,6 @@ function App() {
           />
         </MapContainer>
 
-        {/* LEGEND OVERLAY */}
         <MapLegend />
       </main>
     </div>
