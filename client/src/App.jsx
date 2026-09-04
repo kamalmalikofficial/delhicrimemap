@@ -18,6 +18,32 @@ const API_URL = import.meta.env.VITE_API_URL || "https://your-render-backend-nam
 const BASE_UPDATE_ANCHOR = new Date("2026-08-27T08:00:00+05:30");
 
 // ======================================================
+// HELPER: ROBUST WARD IDENTIFIER EXTRACTION
+// ======================================================
+
+function extractWardId(obj) {
+  if (!obj) return null;
+
+  // Handle case where hoveredWard is a GeoJSON Feature or Layer object with properties
+  const target = obj.properties ? obj.properties : obj;
+
+  const rawId =
+    target.wardNo ??
+    target.ward_no ??
+    target.ward_id ??
+    target.ward_num ??
+    target.WARD_NO ??
+    target.WARD_NUM ??
+    target.Ward_No ??
+    target.id;
+
+  if (rawId === undefined || rawId === null) return null;
+
+  // Convert to string and strip leading zeros so "005" matches "5" or 5
+  return String(rawId).trim().replace(/^0+/, "") || "0";
+}
+
+// ======================================================
 // UPDATE SCHEDULE HELPERS
 // ======================================================
 
@@ -25,10 +51,8 @@ function getLastUpdate() {
   const now = new Date();
   let last = new Date(BASE_UPDATE_ANCHOR);
 
-  // If anchor is in the future relative to system clock, fallback to anchor
   if (last > now) return last;
 
-  // Advance by 2 days until reaching the most recent past update
   while (true) {
     const next = new Date(last);
     next.setDate(next.getDate() + 2);
@@ -93,23 +117,6 @@ function formatTime(date) {
     minute: "2-digit",
     hour12: true,
   });
-}
-
-// Helper to reliably extract Ward ID / Ward Number regardless of GeoJSON or API format
-function extractWardId(obj) {
-  if (!obj) return null;
-  const rawId =
-    obj.wardNo ??
-    obj.ward_no ??
-    obj.ward_id ??
-    obj.ward_num ??
-    obj.WARD_NO ??
-    obj.WARD_NUM ??
-    obj.id;
-
-  if (rawId === undefined || rawId === null) return null;
-  // Normalize string numbers (e.g. "005" -> "5")
-  return String(rawId).replace(/^0+/, "") || "0";
 }
 
 // ======================================================
@@ -216,7 +223,6 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [openSection, setOpenSection] = useState(null);
 
-  // Dynamic update cycle states
   const [lastUpdate, setLastUpdate] = useState(getLastUpdate());
   const [nextUpdate, setNextUpdate] = useState(getNextUpdate());
 
@@ -248,7 +254,6 @@ function App() {
     };
   }, []);
 
-  // Update cycle timer check
   useEffect(() => {
     const timer = setInterval(() => {
       setLastUpdate(getLastUpdate());
@@ -257,7 +262,7 @@ function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // Normalize current ward identifier
+  // Normalize ward ID for comparison
   const targetWardId = useMemo(() => extractWardId(hoveredWard), [hoveredWard]);
 
   // Crimes for the hovered ward
@@ -267,14 +272,14 @@ function App() {
     return crimes.filter((c) => extractWardId(c) === targetWardId);
   }, [crimes, targetWardId]);
 
-  // Latest 3 crimes for the HOVERED WARD ONLY
+  // Latest 3 crimes for the hovered ward
   const latestCrimes = useMemo(() => {
     if (hoveredWardCrimes.length === 0) return [];
 
     return [...hoveredWardCrimes]
       .sort((a, b) => {
-        const dateA = new Date(a.publishedAt || a.createdAt || 0);
-        const dateB = new Date(b.publishedAt || b.createdAt || 0);
+        const dateA = new Date(a.publishedAt || a.createdAt || a.date || 0);
+        const dateB = new Date(b.publishedAt || b.createdAt || b.date || 0);
         return dateB - dateA;
       })
       .slice(0, 3);
@@ -302,17 +307,19 @@ function App() {
 
   const wardDisplayName = useMemo(() => {
     if (!hoveredWard) return "Hover over for more info !!";
+    const props = hoveredWard.properties || hoveredWard;
     return (
-      hoveredWard.name ||
-      hoveredWard.wardName ||
-      hoveredWard.WARD_NAME ||
+      props.name ||
+      props.wardName ||
+      props.WARD_NAME ||
+      props.ward_name ||
       (targetWardId ? `Ward ${targetWardId}` : "Selected Ward")
     );
   }, [hoveredWard, targetWardId]);
 
   const wardCrimeCount = useMemo(() => {
     if (!hoveredWard) return crimes.length;
-    return hoveredWard.totalCrimes ?? hoveredWardCrimes.length;
+    return hoveredWardCrimes.length;
   }, [hoveredWard, crimes.length, hoveredWardCrimes.length]);
 
   return (
@@ -358,10 +365,10 @@ function App() {
                           rel="noopener noreferrer"
                           style={{ color: "#00ffff", textDecoration: "underline" }}
                         >
-                          {item.title || "Untitled Incident"}
+                          {item.title || item.headline || "Untitled Incident"}
                         </a>
                       ) : (
-                        <span>{item.title || "Untitled Incident"}</span>
+                        <span>{item.title || item.headline || "Untitled Incident"}</span>
                       )}
                     </li>
                   ))}
